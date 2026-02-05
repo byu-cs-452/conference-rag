@@ -78,6 +78,20 @@ async function runSetupChecks() {
         githubPagesUrl.textContent = currentUrl;
     }
 
+    // Set setup guide link to GitHub repo (for better preview)
+    const setupGuideLink = document.getElementById('setup-guide-link');
+    if (setupGuideLink && currentUrl.includes('github.io')) {
+        // Extract username and repo from GitHub Pages URL
+        // Format: https://username.github.io/repo-name/
+        const pathParts = window.location.pathname.split('/').filter(p => p);
+        const repoName = pathParts[0] || 'conference-rag';
+        const username = currentUrl.split('.github.io')[0].split('//')[1];
+        setupGuideLink.href = `https://github.com/${username}/${repoName}/blob/main/SETUP.md`;
+    } else {
+        // Fallback to local file for local development
+        setupGuideLink.href = 'SETUP.md';
+    }
+
     // Check 1: Config has real values (not placeholders)
     if (!configIsValid) {
         updateCheckItem(checkConfig, 'error', '❌', 'Configure Supabase credentials in config.js');
