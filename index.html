@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Supabase RAG - Conference Q&A</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+    <!-- Setup Banner (shows when configuration is incomplete) -->
+    <div id="setup-banner" class="setup-banner hidden">
+        <div class="setup-banner-content">
+            <div class="setup-banner-header">
+                <span class="setup-icon">⚙️</span>
+                <h3>Setup Required</h3>
+                <button id="close-setup-banner" class="close-btn" title="Dismiss">×</button>
+            </div>
+
+            <div class="setup-url-section">
+                <label>Your GitHub Pages URL:</label>
+                <div class="url-copy-container">
+                    <code id="github-pages-url">Calculating...</code>
+                    <button id="copy-url-btn" class="copy-btn" title="Copy URL">📋</button>
+                </div>
+                <small>Add this URL to Supabase → Authentication → URL Configuration</small>
+            </div>
+
+            <div class="setup-checklist">
+                <div class="setup-item" id="check-config">
+                    <span class="check-icon">⏳</span>
+                    <span>Configure Supabase credentials in config.js</span>
+                </div>
+                <div class="setup-item" id="check-connection">
+                    <span class="check-icon">⏳</span>
+                    <span>Supabase connection</span>
+                </div>
+                <div class="setup-item" id="check-redirect">
+                    <span class="check-icon">⚠️</span>
+                    <span>Add redirect URL to Supabase (manual step)</span>
+                </div>
+                <div class="setup-item" id="check-openai">
+                    <span class="check-icon">⏳</span>
+                    <span>Add OpenAI API key in settings</span>
+                </div>
+            </div>
+
+            <a href="SETUP.md" target="_blank" class="setup-link">📖 View Full Setup Guide</a>
+        </div>
+    </div>
+
+    <!-- Login Screen -->
+    <div id="login-screen" class="screen">
+        <div class="container">
+            <div class="card">
+                <h1>Conference Q&A</h1>
+                <p class="subtitle">Ask questions about conference talks using AI</p>
+
+                <div id="login-form">
+                    <input type="email" id="email-input" placeholder="Enter your email" />
+                    <button id="login-btn" class="btn-primary">Sign In with Magic Link</button>
+                    <p class="info-text">We'll send you a magic link to sign in</p>
+                </div>
+
+                <div id="login-message" class="message hidden"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main App Screen -->
+    <div id="app-screen" class="screen hidden">
+        <nav class="navbar">
+            <h2>Conference Q&A</h2>
+            <div class="user-info">
+                <span id="user-email"></span>
+                <button id="logout-btn" class="btn-secondary">Logout</button>
+            </div>
+        </nav>
+
+        <div class="container">
+            <div class="chat-container">
+                <div id="chat-messages" class="chat-messages">
+                    <div class="welcome-message">
+                        <h3>Welcome! 👋</h3>
+                        <p>Ask any question about conference talks and I'll help you find answers using semantic search.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="chat-input-container">
+                    <input type="text" id="question-input" placeholder="Ask a question about conference talks..."
+                        autocomplete="off" />
+                    <button id="ask-btn" class="btn-primary">Ask</button>
+                </div>
+            </div>
+
+            <div class="settings-panel">
+                <h3>Settings</h3>
+                <div class="setting-item">
+                    <label for="openai-key">OpenAI API Key</label>
+                    <input type="password" id="openai-key" placeholder="sk-..." />
+                    <small>Your key is stored locally and never sent to our servers</small>
+                </div>
+
+                <div class="setting-item">
+                    <label for="num-results">Number of Results</label>
+                    <input type="number" id="num-results" value="5" min="1" max="20" />
+                </div>
+
+                <button id="save-settings-btn" class="btn-secondary">Save Settings</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Spinner -->
+    <div id="loading" class="loading hidden">
+        <div class="spinner"></div>
+    </div>
+
+    <!-- Supabase JS Client -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+    <!-- Configuration (Students will replace this) -->
+    <script src="config.js"></script>
+
+    <!-- Main Application Logic -->
+    <script src="app.js"></script>
+</body>
+
+</html>
