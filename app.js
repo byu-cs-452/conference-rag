@@ -306,14 +306,8 @@ async function askQuestion() {
     }
 
     const question = questionInput ? questionInput.value.trim() : '';
-    const numResults = 5; // Hardcoded default
 
     if (!question) {
-        return;
-    }
-
-    if (!openaiKey) {
-        addMessage('Please set your OpenAI API key in the settings panel', 'error');
         return;
     }
 
@@ -324,14 +318,17 @@ async function askQuestion() {
     showLoading(true);
 
     try {
-        // Step 1: Get embedding for the question (will use Edge Function)
+        // Step 1: Get embedding via Edge Function (API key stays server-side)
         const embedding = await getEmbedding(question);
 
-        // Step 2: Search for similar documents
-        const results = await searchDocuments(embedding, numResults);
+        // Step 2: Search for similar sentences using pgvector
+        const results = await searchSentences(embedding);
 
-        // Step 3: Generate answer using GPT (will use Edge Function)
-        const answer = await generateAnswer(question, results);
+        // Step 3: Group results by talk and get top talks
+        const topTalks = groupByTalk(results);
+
+        // Step 4: Generate answer via Edge Function
+        const answer = await generateAnswer(question, topTalks);
 
         // Add AI response to chat
         addMessage(answer, 'assistant');
@@ -344,41 +341,36 @@ async function askQuestion() {
     }
 }
 
-// Get embedding from OpenAI
-async function getEmbedding(text, apiKey) {
-    const response = await fetch('https://api.openai.com/v1/embeddings', {
+// Get embedding via Edge Function (OpenAI key stays server-side)
+async function getEmbedding(text) {
+    const response = await fetch(`${SUPABASE_CONFIG.url}/functions/v1/embed-question`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`
+            'Authorization': `Bearer ${SUPABASE_CONFIG.anonKey}`
         },
-        body: JSON.stringify({
-            model: 'text-embedding-3-small',
-            input: text
-        })
+        body: JSON.stringify({ question: text })
     });
 
     if (!response.ok) {
-        throw new Error('Failed to get embedding from OpenAI');
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to get embedding');
     }
 
     const data = await response.json();
-    return data.data[0].embedding;
+    return data.embedding;
 }
 
-// Search documents using Supabase vector similarity
-async function searchDocuments(embedding, limit) {
+// Search sentences using Supabase vector similarity
+async function searchSentences(embedding) {
     if (!supabaseClient) {
         throw new Error('Supabase not configured');
     }
 
-    // TODO: Students will implement this function
-    // This should call a Supabase RPC function that performs vector similarity search
-
-    // Example implementation (students will need to create the RPC function):
-    const { data, error } = await supabaseClient.rpc('search_documents', {
+    const { data, error } = await supabaseClient.rpc('match_sentences', {
         query_embedding: embedding,
-        match_count: limit
+        match_threshold: 0.6,
+        match_count: 20
     });
 
     if (error) {
@@ -388,37 +380,55 @@ async function searchDocuments(embedding, limit) {
     return data;
 }
 
-// Generate answer using GPT
-async function generateAnswer(question, context, apiKey) {
-    const contextText = context.map(doc => doc.content).join('\n\n');
+// Group search results by talk and return top 3 talks with their sentences
+function groupByTalk(sentences) {
+    const talkMap = {};
 
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    for (const sent of sentences) {
+        if (!talkMap[sent.talk_id]) {
+            talkMap[sent.talk_id] = {
+                title: sent.title,
+                speaker: sent.speaker,
+                sentences: [],
+                totalSimilarity: 0
+            };
+        }
+        talkMap[sent.talk_id].sentences.push(sent.text);
+        talkMap[sent.talk_id].totalSimilarity += sent.similarity;
+    }
+
+    // Sort by number of matching sentences (more matches = more relevant)
+    return Object.values(talkMap)
+        .sort((a, b) => b.sentences.length - a.sentences.length)
+        .slice(0, 3)
+        .map(talk => ({
+            title: talk.title,
+            speaker: talk.speaker,
+            text: talk.sentences.join(' ')
+        }));
+}
+
+// Generate answer via Edge Function (OpenAI key stays server-side)
+async function generateAnswer(question, contextTalks) {
+    const response = await fetch(`${SUPABASE_CONFIG.url}/functions/v1/generate-answer`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`
+            'Authorization': `Bearer ${SUPABASE_CONFIG.anonKey}`
         },
         body: JSON.stringify({
-            model: 'gpt-4o-mini',
-            messages: [
-                {
-                    role: 'system',
-                    content: 'You are a helpful assistant that answers questions about conference talks. Use the provided context to answer questions accurately.'
-                },
-                {
-                    role: 'user',
-                    content: `Context:\n${contextText}\n\nQuestion: ${question}`
-                }
-            ]
+            question: question,
+            context_talks: contextTalks
         })
     });
 
     if (!response.ok) {
-        throw new Error('Failed to generate answer from OpenAI');
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to generate answer');
     }
 
     const data = await response.json();
-    return data.choices[0].message.content;
+    return data.answer;
 }
 
 // Add message to chat

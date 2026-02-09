@@ -2,94 +2,77 @@
 -- SUPABASE DATABASE SETUP
 -- ============================================
 -- Run this in your Supabase SQL Editor
+-- This creates the schema for the Conference RAG application
 
 -- Step 1: Enable the pgvector extension for vector similarity search
 CREATE EXTENSION IF NOT EXISTS vector;
 
--- Step 2: Create the documents table
-CREATE TABLE IF NOT EXISTS documents (
-    id BIGSERIAL PRIMARY KEY,
-    content TEXT NOT NULL,
-    metadata JSONB DEFAULT '{}'::jsonb,
+-- Step 2: Create the sentence_embeddings table
+-- Each row is one sentence from a conference talk, with its embedding vector
+CREATE TABLE IF NOT EXISTS sentence_embeddings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    talk_id UUID NOT NULL,
+    title TEXT NOT NULL,
+    speaker TEXT,
+    calling TEXT,
+    year INTEGER,
+    season TEXT,
+    url TEXT,
+    sentence_num INTEGER,
+    text TEXT NOT NULL,
     embedding vector(1536),  -- OpenAI text-embedding-3-small uses 1536 dimensions
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- Step 3: Create an index for faster vector similarity search
 -- This uses IVFFlat algorithm which is good for large datasets
-CREATE INDEX IF NOT EXISTS documents_embedding_idx 
-ON documents 
-USING ivfflat (embedding vector_cosine_ops)
+CREATE INDEX IF NOT EXISTS sentence_embeddings_embedding_idx
+ON sentence_embeddings USING ivfflat (embedding vector_cosine_ops)
 WITH (lists = 100);
 
--- Step 4: Create the vector search function
--- This function performs cosine similarity search
-CREATE OR REPLACE FUNCTION search_documents(
+-- Create index for grouping sentences by talk
+CREATE INDEX IF NOT EXISTS sentence_embeddings_talk_id_idx
+ON sentence_embeddings(talk_id);
+
+-- Step 4: Enable Row Level Security (RLS)
+ALTER TABLE sentence_embeddings ENABLE ROW LEVEL SECURITY;
+
+-- Step 5: Create RLS policies
+-- Allow authenticated users to read all sentences
+CREATE POLICY "Allow authenticated users to read"
+ON sentence_embeddings FOR SELECT
+TO authenticated
+USING (true);
+
+-- Step 6: Create the vector search function
+-- This function performs cosine similarity search and returns matching sentences
+CREATE OR REPLACE FUNCTION match_sentences(
     query_embedding vector(1536),
-    match_count INT DEFAULT 5,
-    min_similarity FLOAT DEFAULT 0.0
+    match_threshold float DEFAULT 0.7,
+    match_count int DEFAULT 20
 )
 RETURNS TABLE (
-    id BIGINT,
-    content TEXT,
-    metadata JSONB,
-    similarity FLOAT
+    id uuid,
+    talk_id uuid,
+    title text,
+    speaker text,
+    text text,
+    similarity float
 )
-LANGUAGE plpgsql
+LANGUAGE sql STABLE
 AS $$
-BEGIN
-    RETURN QUERY
     SELECT
-        documents.id,
-        documents.content,
-        documents.metadata,
-        1 - (documents.embedding <=> query_embedding) AS similarity
-    FROM documents
-    WHERE 1 - (documents.embedding <=> query_embedding) > min_similarity
-    ORDER BY documents.embedding <=> query_embedding
+        sentence_embeddings.id,
+        sentence_embeddings.talk_id,
+        sentence_embeddings.title,
+        sentence_embeddings.speaker,
+        sentence_embeddings.text,
+        1 - (sentence_embeddings.embedding <=> query_embedding) as similarity
+    FROM sentence_embeddings
+    WHERE 1 - (sentence_embeddings.embedding <=> query_embedding) > match_threshold
+    ORDER BY sentence_embeddings.embedding <=> query_embedding
     LIMIT match_count;
-END;
 $$;
-
--- Step 5: Enable Row Level Security (RLS)
-ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
-
--- ============================================
--- TODO: STUDENTS IMPLEMENT RLS POLICIES
--- ============================================
--- You need to create policies that:
--- 1. Allow authenticated users to read all documents
--- 2. (Optional) Control who can insert/update/delete documents
-
--- Example Policy 1: Allow all authenticated users to read documents
--- Uncomment and modify as needed:
-/*
-CREATE POLICY "authenticated_users_read_documents"
-    ON documents
-    FOR SELECT
-    TO authenticated
-    USING (true);
-*/
-
--- Example Policy 2: Only allow service role to insert documents
--- This prevents regular users from adding fake data
-/*
-CREATE POLICY "service_role_insert_documents"
-    ON documents
-    FOR INSERT
-    TO service_role
-    WITH CHECK (true);
-*/
-
--- Example Policy 3: Prevent all users from deleting documents
-/*
-CREATE POLICY "no_delete_documents"
-    ON documents
-    FOR DELETE
-    TO authenticated
-    USING (false);
-*/
 
 -- ============================================
 -- TESTING QUERIES
@@ -99,82 +82,15 @@ CREATE POLICY "no_delete_documents"
 -- Check if pgvector is enabled
 -- SELECT * FROM pg_extension WHERE extname = 'vector';
 
--- Count documents in the table
--- SELECT COUNT(*) FROM documents;
+-- Count sentences in the table
+-- SELECT COUNT(*) FROM sentence_embeddings;
 
--- View sample documents
--- SELECT id, LEFT(content, 100) as content_preview, metadata 
--- FROM documents 
+-- View sample sentences
+-- SELECT id, title, speaker, LEFT(text, 100) as text_preview
+-- FROM sentence_embeddings
 -- LIMIT 5;
 
--- Test the search function (you'll need actual embeddings)
--- SELECT * FROM search_documents(
---     '[0.1, 0.2, ...]'::vector(1536),  -- Replace with actual embedding
---     5  -- Number of results
--- );
-
--- ============================================
--- OPTIONAL: Create a user_queries table to track searches
--- ============================================
-/*
-CREATE TABLE IF NOT EXISTS user_queries (
-    id BIGSERIAL PRIMARY KEY,
-    user_id UUID REFERENCES auth.users(id),
-    query TEXT NOT NULL,
-    results JSONB,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
--- Enable RLS
-ALTER TABLE user_queries ENABLE ROW LEVEL SECURITY;
-
--- Policy: Users can only see their own queries
-CREATE POLICY "users_read_own_queries"
-    ON user_queries
-    FOR SELECT
-    TO authenticated
-    USING (auth.uid() = user_id);
-
--- Policy: Users can insert their own queries
-CREATE POLICY "users_insert_own_queries"
-    ON user_queries
-    FOR INSERT
-    TO authenticated
-    WITH CHECK (auth.uid() = user_id);
-*/
-
--- ============================================
--- HELPFUL FUNCTIONS
--- ============================================
-
--- Function to get document count
-CREATE OR REPLACE FUNCTION get_document_count()
-RETURNS INTEGER
-LANGUAGE plpgsql
-AS $$
-DECLARE
-    doc_count INTEGER;
-BEGIN
-    SELECT COUNT(*) INTO doc_count FROM documents;
-    RETURN doc_count;
-END;
-$$;
-
--- Function to get embedding statistics
-CREATE OR REPLACE FUNCTION get_embedding_stats()
-RETURNS TABLE (
-    total_documents BIGINT,
-    documents_with_embeddings BIGINT,
-    documents_without_embeddings BIGINT
-)
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    RETURN QUERY
-    SELECT
-        COUNT(*) as total_documents,
-        COUNT(embedding) as documents_with_embeddings,
-        COUNT(*) - COUNT(embedding) as documents_without_embeddings
-    FROM documents;
-END;
-$$;
+-- Check unique talks
+-- SELECT DISTINCT title, speaker, year, season
+-- FROM sentence_embeddings
+-- ORDER BY year DESC, season;
